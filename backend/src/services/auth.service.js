@@ -11,7 +11,7 @@ function generateOpaqueRefreshToken() {
 
 // Hash del token para guardar en DB (HMAC-SHA256 con server secret)
 // Si la DB se filtra, los hashes son inútiles sin el secret
-function hashToken(token) {
+export function hashToken(token) {
   const serverSecret = process.env.TOKEN_HASH_SECRET || jwtConfig.refreshSecret;
   return crypto.createHmac('sha256', serverSecret).update(token).digest('hex');
 }
@@ -95,24 +95,14 @@ export function setRefreshTokenCookie(res, token) {
   res.cookie(
     cookieConfig.refreshToken.name,
     token,
-    {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'strict',
-      path: '/api/auth/refresh',  // Scoped to refresh endpoint
-      maxAge: cookieConfig.refreshToken.maxAge
-    }
+    cookieConfig.refreshToken
   );
 }
 
 export function clearRefreshTokenCookie(res) {
-  // IMPORTANTE: clearCookie necesita los mismos flags que setCookie
-  res.clearCookie(cookieConfig.refreshToken.name, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'strict',
-    path: '/api/auth/refresh'  // Mismo scope exacto
-  });
+  // clearCookie NO necesita maxAge - solo httpOnly, secure, sameSite, path
+  const { maxAge, ...clearOptions } = cookieConfig.refreshToken;
+  res.clearCookie(cookieConfig.refreshToken.name, clearOptions);
 }
 
 
@@ -128,6 +118,12 @@ export function setCsrfTokenCookie(res, token) {
       maxAge: cookieConfig.csrfToken.maxAge
     }
   );
+}
+
+export function clearCsrfTokenCookie(res) {
+  // clearCookie NO necesita maxAge - solo httpOnly, secure, sameSite, path
+  const { maxAge, ...clearOptions } = cookieConfig.csrfToken;
+  res.clearCookie(cookieConfig.csrfToken.name, clearOptions);
 }
 
 // ===== AUTH SERVICE =====

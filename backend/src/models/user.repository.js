@@ -68,11 +68,18 @@ export async function deleteTodo(todoId, userId) {
 
 // ===== REFRESH TOKENS REPOSITORY (OPAQUE) =====
 
+import crypto from 'crypto';
+
+// Helper: hashear token con HMAC-SHA256 (debe usar el mismo algoritmo que auth.service.js)
+function hashToken(token) {
+  const serverSecret = process.env.TOKEN_HASH_SECRET || process.env.JWT_REFRESH_SECRET || "refresh-secret-change-in-production";
+  return crypto.createHmac('sha256', serverSecret).update(token).digest('hex');
+}
+
 // Guardar refresh token (hash + jti + ip)
 export async function saveRefreshToken(userId, token, jti, expiresAt, ip = null) {
-  // Hashear el token con SHA-256
-  const crypto = await import('crypto');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  // Hashear el token con HMAC-SHA256 (mismo algoritmo que auth.service.js)
+  const tokenHash = hashToken(token);
 
   const result = await query(
     `INSERT INTO refresh_tokens (user_id, token_hash, jti, expires_at, ip, revoked)
@@ -108,8 +115,8 @@ export async function revokeRefreshToken(tokenId) {
 
 // Eliminar token por hash (legacy - mantener compatibilidad)
 export async function deleteRefreshToken(token) {
-  const crypto = await import('crypto');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  // Hashear con HMAC (mismo algoritmo)
+  const tokenHash = hashToken(token);
   await query('DELETE FROM refresh_tokens WHERE token_hash = $1', [tokenHash]);
 }
 

@@ -18,19 +18,21 @@ export const jwtConfig = {
     maxSessionsPerUser: 5, // Límite de sesiones activas
 };
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 export const cookieConfig = {
     refreshToken: {
         name: "refreshToken",
         httpOnly: true,
-        secure: true,
+        secure: isProduction, // Solo en producción (requires HTTPS)
         sameSite: "strict",
-        path: "/",
+        path: "/api/auth/refresh", // Scope específico para minimizar superficie
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 días en ms
     },
     csrfToken: {
         name: "csrf_token",
         httpOnly: false, // Debe ser accesible desde JS
-        secure: true,
+        secure: isProduction, // Solo en producción (requires HTTPS)
         sameSite: "strict",
         path: "/",
         maxAge: 24 * 60 * 60 * 1000, // 1 día

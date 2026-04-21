@@ -13,6 +13,9 @@ class AuthService {
     
     // Callbacks para notify cambios de estado
     this.listeners = new Set();
+    
+    // 🔒 Prevención de refresh concurrente (evita token reuse)
+    this.refreshingPromise = null;
   }
   
   // Observer pattern para cambios de autenticación
@@ -127,45 +130,72 @@ class AuthService {
   }
   
   async refreshSession() {
+    // 🔒 Si ya hay un refresh en progreso, devolver la misma promesa
+    // Esto previene "token reuse" cuando múltiples requests disparan refresh
+    if (this.refreshingPromise) {
+      return this.refreshingPromise;
+    }
+
     // IMPORTANTE: La cookie refreshToken es httpOnly, NO podemos leerla desde JS.
     // Simplemente intentamos el refresh - el backend verificará la cookie.
     // Si no hay cookie o está inválida, el backend devolverá 401.
+    // CSRF token se envía desde la cookie (no httpOnly) para protección CSRF
     
-    try {
-      const response = await fetch(`${API_URL}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        // Limpiar estado si el refresh falla
-        this.accessToken = null;
-        this.user = null;
+    // 🔒 Crear la promesa de refresh
+    this.refreshingPromise = (async () => {
+      try {
+        const csrf = this.getCsrfTokenFromCookie();
+        const headers = {
+          'Content-Type': 'application/json'
+        };
+        if (csrf) {
+          headers['X-CSRF-Token'] = csrf;
+        }
+        
+        const response = await fetch(`${API_URL}/auth/refresh`, {
+          method: 'POST',
+          headers,
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          // Limpiar estado si el refresh falla
+          this.accessToken = null;
+          this.user = null;
+          this.notifyListeners();
+          return false;
+        }
+        
+        const data = await response.json();
+        
+        // Actualizar access token en MEMORIA
+        this.accessToken = data.accessToken;
+        this.user = data.user;
+        this.csrfToken = this.getCsrfTokenFromCookie();
+        
+        // Registrar tiempo de refresh para el indicador visual
+        this.lastRefreshTime = Date.now();
+        
         this.notifyListeners();
+        return true;
+      } catch (error) {
         return false;
+      } finally {
+        // 🔒 Liberar el lock
+        this.refreshingPromise = null;
       }
-      
-      const data = await response.json();
-      
-      // Actualizar access token en MEMORIA
-      this.accessToken = data.accessToken;
-      this.user = data.user;
-      this.csrfToken = this.getCsrfTokenFromCookie();
-      
-      // Registrar tiempo de refresh para el indicador visual
-      this.lastRefreshTime = Date.now();
-      
-      this.notifyListeners();
-      return true;
-    } catch (error) {
-      return false;
-    }
+    })();
+
+    return this.refreshingPromise;
   }
   
   async logout() {
     try {
+      // Logout也需要CSRF token (mutative request)
+      const headers = await this.getHeaders(true);
       await fetch(`${API_URL}/auth/logout`, {
         method: 'POST',
+        headers,
         credentials: 'include'
       });
     } catch {
@@ -217,12 +247,24 @@ class AuthService {
 
   // Subscribe al timer para UI
   subscribeToTimer(callback) {
+    let refreshTriggered = false; // Evitar múltiples refresh
+    
     const interval = setInterval(() => {
+      // Si no hay sesión activa, no intentar refresh
+      if (!this.accessToken) return;
+      
       const ms = this.getTimeUntilRefresh();
       
       // Proactive refresh: 30 segundos antes de que expire
-      if (ms > 0 && ms < 30 * 1000) {
-        this.refreshSession(); // Fire & forget, no esperamos
+      if (ms > 0 && ms < 30 * 1000 && !refreshTriggered) {
+        refreshTriggered = true; // Marcar que ya se intentó refresh
+        this.refreshSession().then(success => {
+          if (!success) {
+            // Si falló, limpiar sesión
+            this.logout();
+          }
+          refreshTriggered = false; // Reset para próximo refresh
+        });
       }
       
       callback(this.getTimeUntilRefreshFormatted());

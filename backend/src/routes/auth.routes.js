@@ -1,7 +1,8 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import * as authService from '../services/auth.service.js';
-import { setRefreshTokenCookie, clearRefreshTokenCookie, setCsrfTokenCookie } from '../services/auth.service.js';
+import { setRefreshTokenCookie, clearRefreshTokenCookie, setCsrfTokenCookie, clearCsrfTokenCookie } from '../services/auth.service.js';
+import { hashToken as hashTokenHelper } from '../services/auth.service.js';
 import { csrfProtection } from '../middleware/csrf.middleware.js';
 import * as userRepo from '../models/user.repository.js';
 
@@ -88,8 +89,8 @@ router.post('/logout', csrfProtection, async (req, res) => {
 
     if (refreshToken) {
       // Buscar token en BD para obtener userId (CSRF ya validó)
-      const crypto = await import('crypto');
-      const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      // IMPORTANTE: usar HMAC hash como en auth.service.js
+      const tokenHash = hashTokenHelper(refreshToken);
       const storedToken = await userRepo.findRefreshTokenByHash(tokenHash);
 
       if (storedToken) {
@@ -98,9 +99,11 @@ router.post('/logout', csrfProtection, async (req, res) => {
     }
 
     clearRefreshTokenCookie(res);
+    clearCsrfTokenCookie(res);  // ⚠️ IMPORTANTE: borrar CSRF también
     res.json({ message: 'Logout exitoso' });
   } catch (error) {
     clearRefreshTokenCookie(res);
+    clearCsrfTokenCookie(res);
     res.status(500).json({
       error: 'Error en logout',
       code: 'LOGOUT_ERROR'

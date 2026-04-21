@@ -159,9 +159,100 @@ await fetch('/api/auth/refresh', {
 // Esperado: 403
 ```
 
+## 📚 Documentación Técnica
+
+### Sistema de Tokens y Cookies
+
+#### 1. Access Token (JWT)
+- **Storage**: Memoria JS (NUNCA localStorage)
+- **Duración**: 5 minutos
+- **Propósito**: Autenticación de requests
+- **Envío**: `Authorization: Bearer <token>`
+
+#### 2. Refresh Token (OPAQUE)
+- **Storage**: Cookie httpOnly
+- **Duración**: 7 días
+- **Generación**: 64 bytes random (256 bits entropía)
+- **Hash**: HMAC-SHA256 con JWT_REFRESH_SECRET
+- **Rotación**: Cada uso genera nuevo token (el anterior se revoca)
+- **Path**: `/api/auth/refresh`
+
+#### 3. CSRF Token
+- **Storage**: Cookie (NO httpOnly - accesible por JS)
+- **Propósito**: Double Submit Cookie Pattern
+- **Envío**: Header `X-CSRF-Token`
+- **Validación**: cookie === header
+
+#### Cookies
+| Cookie | httpOnly | secure | sameSite | path |
+|--------|----------|--------|---------|------|
+| refreshToken | ✅ | ✅* | strict | /api/auth/refresh |
+| csrf_token | ❌ | ✅* | strict | / |
+
+*secure: true solo en producción (NODE_ENV=production)
+
 ---
 
-## 📚 Documentación Pendiente
+### Flujo de Autenticación
+
+```
+1. LOGIN
+   - Backend: Genera access + refresh + CSRF
+   - Backend: Guarda refresh (hash HMAC) en DB
+   - Set-Cookie: refreshToken (httpOnly)
+   - Set-Cookie: csrf_token (JS readable)
+   - Response: { accessToken, user }
+
+2. REQUEST (POST/PUT/DELETE)
+   - Frontend → API (con access + CSRF)
+   - Backend: valida JWT + CSRF + rate limit
+
+3. ACCESS EXPIRA (5 min)
+   - API → 401
+   - Frontend → /auth/refresh (con cookie)
+   - Backend: valida refresh, rota token
+   - Response: nuevos tokens
+
+4. LOGOUT
+   - Backend: borra refresh de DB
+   - Clear-Cookie: refreshToken + csrf_token
+```
+
+---
+
+### 🐛 Bugs Encontrados y Soluciones
+
+| Bug | Causa | Solución |
+|-----|------|---------|
+| "Token inválido" en refresh | Repository usaba SHA256 plano, service HMAC-SHA256 | Unificar a HMAC-SHA256 con mismo secret |
+| "Token reuse detected" x3 | Frontend hacía 3 refresh simultáneos | Lock `refreshingPromise` en frontend |
+| Sesión cerrada al logout | Timer seguía corriendo | Verificar `if (!this.accessToken)` antes de refresh |
+| Logout no borraba CSRF | Faltaba clearCsrfTokenCookie | Agregar función y llamar en logout |
+| Cookies no se enviaban en dev | secure: true requiere HTTPS | `secure: isProduction` en config |
+| refresh fallaba en reload | CSRF no enviado en refresh | Frontend envía CSRF desde cookie |
+
+---
+
+### 🔧 Configuración Requerida
+
+```bash
+# Variables de entorno obligatorias
+DATABASE_URL=postgresql://...
+JWT_ACCESS_SECRET=...       # Para access tokens
+JWT_REFRESH_SECRET=...    # Para hash de refresh tokens
+TOKEN_HASH_SECRET=...     # Override opcional (usa JWT_REFRESH_SECRET si no existe
+```
+
+---
+
+### Security
+
+- **Race condition**: `UPDATE ... WHERE revoked = false`
+- **Reuse detection**: Invalida todas las sesiones si se detecta
+- **Rate limit**: 10 refresh/min por IP
+- **Max sessions**: 5 por usuario
+
+---
 
 ### Para Developers
 - [ ] **API Spec**: OpenAPI/Swagger de todos los endpoints
