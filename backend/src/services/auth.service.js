@@ -63,11 +63,7 @@ export function generateRefreshToken(user, metadata = {}) {
 }
 
 
-    // No bloqueamos por UserAgent, solo logueamos
-  }
 
-  return true;
-}
 
 // ===== CSRF TOKEN =====
 
@@ -118,8 +114,7 @@ export function clearRefreshTokenCookie(res) {
     path: '/api/auth/refresh'  // Mismo scope exacto
   });
 }
-  );
-}
+
 
 export function setCsrfTokenCookie(res, token) {
   res.cookie(
